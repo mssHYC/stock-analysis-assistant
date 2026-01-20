@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+venv/
+env/
+.env
+
+# Distribution / Packaging
+dist/
+build/
+*.egg-info/
+
+# PyCharm / VS Code
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Configuration (Sensitive Data)
+# config.py
