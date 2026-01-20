@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  stock-analyzer:
+    build: .
+    container_name: stock-analyzer
+    restart: unless-stopped
+    volumes:
+      # 挂载配置文件，修改配置无需重建镜像
+      # 飞牛 NAS 路径映射：宿主机路径:容器路径
+      - ./config.py:/app/config.py
+      # 挂载日志目录（可选，方便在 NAS 上查看运行日志）
+      - ./logs:/app/logs
+    environment:
+      - TZ=Asia/Shanghai
+    # 飞牛 NAS 常用网络配置（可选，通常 bridge 即可）
+    network_mode: bridge

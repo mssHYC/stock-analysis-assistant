@@ -4,21 +4,41 @@ import datetime
 import argparse
 import sys
 import markdown
+import os
 
 import config
 from data_fetcher import fetch_stock_data, fetch_market_index_data, fetch_financial_news
 from analyzer import analyze_stock, analyze_market
 from mailer import send_email
 
+# 确保日志目录存在
+LOG_DIR = "/app/logs"
+if not os.path.exists(LOG_DIR):
+    try:
+        os.makedirs(LOG_DIR)
+    except:
+        pass # 如果无法创建（例如非容器环境），则忽略
+
+def log(message):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    formatted_message = f"[{timestamp}] {message}"
+    print(formatted_message)
+    # 简单的文件日志记录
+    try:
+        with open(f"{LOG_DIR}/app.log", "a") as f:
+            f.write(formatted_message + "\n")
+    except:
+        pass
+
 def job():
-    print(f"[{datetime.datetime.now()}] 开始执行定时任务...")
+    log("开始执行定时任务...")
     
     # 初始化 Markdown 报告
     md_report = f"# 宏观市场与股票分析日报 ({datetime.date.today()})\n\n"
     md_report += "---\n\n"
 
     # --- 1. 宏观大盘分析 ---
-    print("正在获取大盘数据和市场概况...")
+    log("正在获取大盘数据和市场概况...")
     try:
         # 获取大盘指数数据
         market_data_map = fetch_market_index_data(config.MARKET_INDEXES)
@@ -30,7 +50,7 @@ def job():
         news_str = fetch_financial_news()
         
         # 调用 AI 分析宏观
-        print("正在进行宏观大盘分析...")
+        log("正在进行宏观大盘分析...")
         macro_analysis = analyze_market(market_data_str, news_str)
         
         md_report += "## 🌏 宏观策略报告\n\n"
@@ -38,17 +58,17 @@ def job():
         md_report += "---\n\n"
         
     except Exception as e:
-        print(f"宏观分析出错: {e}")
+        log(f"宏观分析出错: {e}")
         md_report += f"## 宏观分析出错\n{str(e)}\n\n"
 
     # --- 2. 个股分析 ---
-    print("正在获取个股数据...")
+    log("正在获取个股数据...")
     stock_data_map = fetch_stock_data(config.STOCK_SYMBOLS)
     
     if stock_data_map:
-        print("正在分析个股数据...")
+        log("正在分析个股数据...")
         for symbol, data_str in stock_data_map.items():
-            print(f"正在分析 {symbol} ...")
+            log(f"正在分析 {symbol} ...")
             
             # 如果数据获取出错，直接添加到报告
             if "错误" in data_str or "无法获取" in data_str:
@@ -60,7 +80,7 @@ def job():
             md_report += analysis_result + "\n\n"
             md_report += "---\n\n"
     else:
-        print("未配置个股或获取失败，跳过个股分析。")
+        log("未配置个股或获取失败，跳过个股分析。")
 
     # 3. 转换为 HTML
     html_report = markdown.markdown(md_report, extensions=['tables', 'fenced_code'])
@@ -80,11 +100,11 @@ def job():
     final_html = f"<html><head>{html_style}</head><body>{html_report}</body></html>"
 
     # 4. 发送邮件
-    print("正在发送邮件...")
+    log("正在发送邮件...")
     subject = f"每日股票分析报告 - {datetime.date.today()}"
     send_email(subject, final_html)
     
-    print(f"[{datetime.datetime.now()}] 任务执行完毕！")
+    log("任务执行完毕！")
 
 def main():
     parser = argparse.ArgumentParser(description="股票分析助手")
@@ -96,7 +116,7 @@ def main():
         return
 
     # 设置定时任务
-    print(f"股票分析助手已启动。将在每天 {config.SCHEDULE_TIME} 运行。")
+    log(f"股票分析助手已启动。将在每天 {config.SCHEDULE_TIME} 运行。")
     print("按 Ctrl+C 退出程序。")
     
     schedule.every().day.at(config.SCHEDULE_TIME).do(job)
@@ -109,7 +129,7 @@ def main():
             print("\n程序已退出。")
             sys.exit(0)
         except Exception as e:
-            print(f"发生错误: {str(e)}")
+            log(f"发生错误: {str(e)}")
             time.sleep(60)
 
 if __name__ == "__main__":
