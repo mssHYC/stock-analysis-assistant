@@ -8,7 +8,7 @@ import os
 
 import config
 from data_fetcher import fetch_stock_data, fetch_market_index_data, fetch_financial_news
-from analyzer import analyze_stock, analyze_market
+from analyzer import analyze_stock, analyze_market, extract_stock_codes
 from mailer import send_email
 
 # 确保日志目录存在
@@ -53,6 +53,14 @@ def job():
         log("正在进行宏观大盘分析...")
         macro_analysis = analyze_market(market_data_str, news_str)
         
+        # 提取 AI 推荐的股票代码并添加到待分析列表
+        recommended_stocks = extract_stock_codes(macro_analysis)
+        if recommended_stocks:
+            log(f"AI 推荐关注股票: {recommended_stocks}")
+            for code in recommended_stocks:
+                if code not in config.STOCK_SYMBOLS:
+                    config.STOCK_SYMBOLS.append(code)
+            log(f"当前待分析股票列表: {config.STOCK_SYMBOLS}")        
         md_report += "## 🌏 宏观策略报告\n\n"
         md_report += macro_analysis + "\n\n"
         md_report += "---\n\n"
@@ -134,3 +142,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
