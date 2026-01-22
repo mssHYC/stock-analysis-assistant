@@ -23,3 +23,8 @@ MARKET_INDEXES = ["000001", "399001", "000300", "399006"]
 
 # 定时任务配置
 SCHEDULE_TIME = "18:00"
+
+# gemini 模型配置
+GEMINI_MODEL = "xxx"
+GEMINI_API_KEY = "xxx"
+
