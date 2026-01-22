@@ -2,3 +2,4 @@ akshare
 openai
 schedule
 markdown
+google-genai

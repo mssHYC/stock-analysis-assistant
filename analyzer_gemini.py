@@ -1,7 +1,12 @@
-from openai import OpenAI
+from google import genai
+from google.genai import types
 import config
 import re
 import json
+import warnings
+
+# 忽略 google-genai 库内部的 DeprecationWarning (针对 Python 3.14+ 环境)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.genai")
 
 def extract_stock_codes(text: str) -> list:
     """
@@ -24,13 +29,10 @@ def analyze_market(market_data_str: str, news_str: str) -> str:
     """
     分析宏观大盘
     """
-    if not config.DEEPSEEK_API_KEY or config.DEEPSEEK_API_KEY == "your_deepseek_api_key_here":
-        return "错误: 未配置 DeepSeek API Key。请在 config.py 中设置。"
+    if not config.GEMINI_API_KEY or config.GEMINI_API_KEY == "your_google_gemini_api_key_here":
+        return "错误: 未配置 Google Gemini API Key。请在 config.py 中设置。"
 
-    client = OpenAI(
-        api_key=config.DEEPSEEK_API_KEY,
-        base_url=config.DEEPSEEK_BASE_URL
-    )
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     prompt = f"""
     # Role: 全球宏观与多资产配置策略师
@@ -160,31 +162,29 @@ def analyze_market(market_data_str: str, news_str: str) -> str:
     """
 
     try:
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": "你是一位首席宏观策略分析师，擅长自上而下的宏观分析和资产配置。"},
-                {"role": "user", "content": prompt}
-            ],
-            stream=False
+        full_prompt = "你是一位首席宏观策略分析师，擅长自上而下的宏观分析和资产配置。\n\n" + prompt
+        response = client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=full_prompt,
         )
-        return response.choices[0].message.content
+        if response.text:
+            return response.text
+        return "Google Gemini API 返回内容为空 (可能是触发了安全过滤)。"
     except Exception as e:
-        return f"调用 DeepSeek API 分析时出错: {str(e)}"
+        return f"调用 Gemini API 分析时出错: {str(e)}"
 
 def analyze_stock(stock_data_str: str) -> str:
     """
-    使用 DeepSeek 分析股票数据
+    使用 Gemini 分析股票数据
     ... (保持原有的个股分析逻辑)
     """
-    if not config.DEEPSEEK_API_KEY or config.DEEPSEEK_API_KEY == "your_deepseek_api_key_here":
-        return "错误: 未配置 DeepSeek API Key。请在 config.py 中设置。"
+    if not config.GEMINI_API_KEY or config.GEMINI_API_KEY == "your_google_gemini_api_key_here":
+        return "错误: 未配置 Google Gemini API Key。请在 config.py 中设置。"
     
     # ... (后续代码保持不变)
 
-    client = OpenAI(
-        api_key=config.DEEPSEEK_API_KEY,
-        base_url=config.DEEPSEEK_BASE_URL
+    client = genai.Client(
+        api_key=config.GEMINI_API_KEY,
     )
 
     prompt = f"""
@@ -316,17 +316,16 @@ def analyze_stock(stock_data_str: str) -> str:
     """
 
     try:
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": "你是一位顶级买方基金的精英股票分析师，擅长结合宏观、行业与技术面对个股进行深度剖析。"},
-                {"role": "user", "content": prompt}
-            ],
-            stream=False
+        full_prompt = "你是一位顶级买方基金的精英股票分析师，擅长结合宏观、行业与技术面对个股进行深度剖析。\n\n" + prompt
+        response = client.models.generate_content(
+            model=config.GEMINI_MODEL,
+            contents=full_prompt,
         )
-        return response.choices[0].message.content
+        if response.text:
+            return response.text
+        return "Google Gemini API 返回内容为空 (可能是触发了安全过滤)。"
     except Exception as e:
-        return f"调用 DeepSeek API 分析时出错: {str(e)}"
+        return f"调用 Gemini API 分析时出错: {str(e)}"
 
 if __name__ == "__main__":
     # 测试代码

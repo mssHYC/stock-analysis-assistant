@@ -9,6 +9,7 @@ import os
 import config
 from data_fetcher import fetch_stock_data, fetch_market_index_data, fetch_financial_news
 from analyzer import analyze_stock, analyze_market, extract_stock_codes
+from analyzer_gemini import analyze_stock as analyze_stock_gemini, analyze_market as analyze_market_gemini, extract_stock_codes as extract_stock_codes_gemini
 from mailer import send_email
 
 # 确保日志目录存在
@@ -30,8 +31,8 @@ def log(message):
     except:
         pass
 
-def job():
-    log("开始执行定时任务...")
+def run_analysis_job(analyze_market_func, extract_stock_codes_func, analyze_stock_func, model_name):
+    log(f"开始执行定时任务 ({model_name})...")
     
     # 初始化 Markdown 报告
     md_report = f"# 宏观市场与股票分析日报 ({datetime.date.today()})\n\n"
@@ -51,10 +52,10 @@ def job():
         
         # 调用 AI 分析宏观
         log("正在进行宏观大盘分析...")
-        macro_analysis = analyze_market(market_data_str, news_str)
+        macro_analysis = analyze_market_func(market_data_str, news_str)
         
         # 提取 AI 推荐的股票代码并添加到待分析列表
-        recommended_stocks = extract_stock_codes(macro_analysis)
+        recommended_stocks = extract_stock_codes_func(macro_analysis)
         if recommended_stocks:
             log(f"AI 推荐关注股票: {recommended_stocks}")
             for code in recommended_stocks:
@@ -82,10 +83,13 @@ def job():
             if "错误" in data_str or "无法获取" in data_str:
                  analysis_result = data_str
             else:
-                analysis_result = analyze_stock(data_str)
+                analysis_result = analyze_stock_func(data_str)
                 
             md_report += f"## 📊 {symbol} 个股分析\n\n"
-            md_report += analysis_result + "\n\n"
+            if analysis_result:
+                md_report += analysis_result + "\n\n"
+            else:
+                md_report += "分析失败: 未能获取分析结果。\n\n"
             md_report += "---\n\n"
     else:
         log("未配置个股或获取失败，跳过个股分析。")
@@ -109,10 +113,16 @@ def job():
 
     # 4. 发送邮件
     log("正在发送邮件...")
-    subject = f"每日股票分析报告 - {datetime.date.today()}"
+    subject = f"每日股票分析报告（{model_name}） - {datetime.date.today()}"
     send_email(subject, final_html)
     
     log("任务执行完毕！")
+
+def job():
+    run_analysis_job(analyze_market, extract_stock_codes, analyze_stock, "DeepSeek")
+
+def job_gemini():
+    run_analysis_job(analyze_market_gemini, extract_stock_codes_gemini, analyze_stock_gemini, "Gemini")
 
 def main():
     parser = argparse.ArgumentParser(description="股票分析助手")
@@ -121,6 +131,7 @@ def main():
 
     if args.now:
         job()
+        job_gemini()
         return
 
     # 设置定时任务
