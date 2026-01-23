@@ -130,7 +130,7 @@ def main():
     args = parser.parse_args()
 
     if args.now:
-        job()
+        # job()
         job_gemini()
         return
 
@@ -138,7 +138,7 @@ def main():
     log(f"股票分析助手已启动。将在每天 {config.SCHEDULE_TIME} 运行。")
     print("按 Ctrl+C 退出程序。")
     
-    schedule.every().day.at(config.SCHEDULE_TIME).do(job)
+    schedule.every().day.at(config.SCHEDULE_TIME).do()
 
     while True:
         try:

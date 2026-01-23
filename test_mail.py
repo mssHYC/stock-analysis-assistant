@@ -37,11 +37,15 @@ def test_connection():
         # 修正 From 头
         nickname = "股票分析测试"
         msg['From'] = formataddr((str(Header(nickname, 'utf-8')), config.SMTP_USER))
-        msg['To'] = config.TO_EMAIL
+        
+        # 支持多个收件人
+        to_emails = getattr(config, 'TO_EMAILS', [config.TO_EMAIL])
+        msg['To'] = ",".join(to_emails)
         
         print(f"构造的 From 头: {msg['From']}")
+        print(f"构造的 To 头: {msg['To']}")
         
-        server.sendmail(config.SMTP_USER, [config.TO_EMAIL], msg.as_string())
+        server.sendmail(config.SMTP_USER, to_emails, msg.as_string())
         print("测试邮件发送成功！")
         server.quit()
         

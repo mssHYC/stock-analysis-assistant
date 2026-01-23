@@ -27,12 +27,12 @@ def send_email(subject: str, content: str):
     nickname = "股票分析助手"
     message['From'] = formataddr((str(Header(nickname, 'utf-8')), config.SMTP_USER))
     
-    # 设置 To 头 (多个收件人时，显示为逗号分隔的字符串，或者只显示第一个)
-    # 注意：To 头仅用于显示，实际发送列表由 sendmail 参数决定
+    # 设置 To 头 (多个收件人时，显示为逗号分隔的字符串)
+    # 注意：直接使用 join，不要用 Header 包装整个列表，否则逗号可能被编码导致发送失败
     if len(to_emails) > 1:
-        message['To'] = Header(",".join(to_emails), 'utf-8')
+        message['To'] = ",".join(to_emails)
     else:
-        message['To'] = Header(to_emails[0], 'utf-8')
+        message['To'] = to_emails[0]
         
     message['Subject'] = Header(subject, 'utf-8')
 
