@@ -3,3 +3,4 @@ openai
 schedule
 markdown
 google-genai
+httpx[socks]

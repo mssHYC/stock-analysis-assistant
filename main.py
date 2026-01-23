@@ -169,7 +169,8 @@ def main():
     log(f"股票分析助手已启动。将在每天 {config.SCHEDULE_TIME} 运行。")
     print("按 Ctrl+C 退出程序。")
     
-    schedule.every().day.at(config.SCHEDULE_TIME).do()
+    # 使用 DeepSeek 作为默认任务
+    schedule.every().day.at(config.SCHEDULE_TIME).do(job)
 
     while True:
         try:
