@@ -31,12 +31,31 @@ def log(message):
     except:
         pass
 
+def is_analysis_error(text):
+    """判断分析结果是否包含错误信息"""
+    if not text:
+        return True
+    error_indicators = [
+        "调用 DeepSeek API 分析时出错",
+        "调用 Gemini API 分析时出错",
+        "Google Gemini API 返回内容为空",
+        "错误:",
+        "分析失败:",
+        "无法获取"
+    ]
+    for indicator in error_indicators:
+        if indicator in text:
+            return True
+    return False
+
 def run_analysis_job(analyze_market_func, extract_stock_codes_func, analyze_stock_func, model_name):
     log(f"开始执行定时任务 ({model_name})...")
     
     # 初始化 Markdown 报告
     md_report = f"# 宏观市场与股票分析日报 ({datetime.date.today()})\n\n"
     md_report += "---\n\n"
+    
+    valid_content_count = 0
 
     # --- 1. 宏观大盘分析 ---
     log("正在获取大盘数据和市场概况...")
@@ -54,21 +73,25 @@ def run_analysis_job(analyze_market_func, extract_stock_codes_func, analyze_stoc
         log("正在进行宏观大盘分析...")
         macro_analysis = analyze_market_func(market_data_str, news_str)
         
-        # 提取 AI 推荐的股票代码并添加到待分析列表
-        recommended_stocks = extract_stock_codes_func(macro_analysis)
-        if recommended_stocks:
-            log(f"AI 推荐关注股票: {recommended_stocks}")
-            for code in recommended_stocks:
-                if code not in config.STOCK_SYMBOLS:
-                    config.STOCK_SYMBOLS.append(code)
-            log(f"当前待分析股票列表: {config.STOCK_SYMBOLS}")        
-        md_report += "## 🌏 宏观策略报告\n\n"
-        md_report += macro_analysis + "\n\n"
-        md_report += "---\n\n"
+        if is_analysis_error(macro_analysis):
+            log(f"宏观分析返回错误，跳过报告生成: {macro_analysis[:100]}...")
+        else:
+            # 提取 AI 推荐的股票代码并添加到待分析列表
+            recommended_stocks = extract_stock_codes_func(macro_analysis)
+            if recommended_stocks:
+                log(f"AI 推荐关注股票: {recommended_stocks}")
+                for code in recommended_stocks:
+                    if code not in config.STOCK_SYMBOLS:
+                        config.STOCK_SYMBOLS.append(code)
+                log(f"当前待分析股票列表: {config.STOCK_SYMBOLS}")        
+            md_report += "## 🌏 宏观策略报告\n\n"
+            md_report += macro_analysis + "\n\n"
+            md_report += "---\n\n"
+            valid_content_count += 1
         
     except Exception as e:
-        log(f"宏观分析出错: {e}")
-        md_report += f"## 宏观分析出错\n{str(e)}\n\n"
+        log(f"宏观分析执行异常: {e}")
+        # 异常情况下不添加到报告
 
     # --- 2. 个股分析 ---
     log("正在获取个股数据...")
@@ -79,20 +102,28 @@ def run_analysis_job(analyze_market_func, extract_stock_codes_func, analyze_stoc
         for symbol, data_str in stock_data_map.items():
             log(f"正在分析 {symbol} ...")
             
-            # 如果数据获取出错，直接添加到报告
+            # 如果数据获取出错
             if "错误" in data_str or "无法获取" in data_str:
-                 analysis_result = data_str
-            else:
-                analysis_result = analyze_stock_func(data_str)
+                 log(f"{symbol} 数据获取失败，跳过分析")
+                 continue
+            
+            analysis_result = analyze_stock_func(data_str)
+            
+            if is_analysis_error(analysis_result):
+                log(f"{symbol} 分析返回错误，跳过报告生成: {analysis_result[:100]}...")
+                continue
                 
             md_report += f"## 📊 {symbol} 个股分析\n\n"
-            if analysis_result:
-                md_report += analysis_result + "\n\n"
-            else:
-                md_report += "分析失败: 未能获取分析结果。\n\n"
+            md_report += analysis_result + "\n\n"
             md_report += "---\n\n"
+            valid_content_count += 1
     else:
         log("未配置个股或获取失败，跳过个股分析。")
+
+    # 检查是否有有效内容
+    if valid_content_count == 0:
+        log("本次任务未生成任何有效分析内容，取消发送邮件。")
+        return
 
     # 3. 转换为 HTML
     html_report = markdown.markdown(md_report, extensions=['tables', 'fenced_code'])

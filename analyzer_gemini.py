@@ -8,6 +8,23 @@ import warnings
 # 忽略 google-genai 库内部的 DeprecationWarning (针对 Python 3.14+ 环境)
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="google.genai")
 
+def create_gemini_client(prompt: str):
+    """创建 Gemini 客户端"""
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
+   
+    response = client.models.generate_content(
+        model=config.GEMINI_MODEL,
+        contents=[types.Content(parts=[types.Part(text=prompt)])],
+        config=types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_level="low"),
+            temperature=1.0,
+            top_p=0.5,
+            top_k=0.5,
+        )
+    )
+    return response
+
+
 def extract_stock_codes(text: str) -> list:
     """
     从分析文本中提取推荐的股票代码
@@ -317,13 +334,29 @@ def analyze_stock(stock_data_str: str) -> str:
 
     try:
         full_prompt = "你是一位顶级买方基金的精英股票分析师，擅长结合宏观、行业与技术面对个股进行深度剖析。\n\n" + prompt
-        response = client.models.generate_content(
-            model=config.GEMINI_MODEL,
-            contents=full_prompt,
-        )
-        if response.text:
-            return response.text
-        return "Google Gemini API 返回内容为空 (可能是触发了安全过滤)。"
+        
+        # 增加重试机制处理 503 Overloaded 错误
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=config.GEMINI_MODEL,
+                    contents=full_prompt,
+                )
+                if response.text:
+                    return response.text
+                return "Google Gemini API 返回内容为空 (可能是触发了安全过滤)。"
+            except Exception as e:
+                error_str = str(e)
+                # 检查是否是 503 或 Overloaded 错误
+                if "503" in error_str or "overloaded" in error_str.lower():
+                    if attempt < max_retries - 1:
+                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                        print(f"Gemini API 繁忙 (503), 正在进行第 {attempt + 1} 次重试... (等待 {sleep_time:.2f}s)")
+                        time.sleep(sleep_time)
+                        continue
+                raise e # 如果不是 503 或重试次数耗尽，则抛出异常
+
     except Exception as e:
         return f"调用 Gemini API 分析时出错: {str(e)}"
 
