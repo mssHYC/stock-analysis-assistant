@@ -1,11 +1,60 @@
 import akshare as ak
 import pandas as pd
 import datetime
+import os
 from typing import Dict, Any, List
+
+def get_sina_symbol(code: str) -> str:
+    """
+    为股票代码添加 sh/sz 前缀以适配 Sina 接口
+    """
+    if code.startswith(('60', '68')):
+        return f"sh{code}"
+    elif code.startswith(('00', '30')):
+        return f"sz{code}"
+    elif code.startswith(('4', '8')):
+        return f"bj{code}"
+    else:
+        return code
+
+def fetch_sector_map() -> Dict[str, float]:
+    """
+    获取行业板块涨跌幅数据，用于计算相对强弱
+    Returns: {sector_name: change_percent}
+    """
+    sector_map = {}
+    
+    # 尝试 1: 新浪行业
+    try:
+        bk_flow = ak.stock_sector_spot(indicator="新浪行业")
+        if bk_flow is not None and not bk_flow.empty:
+            col_name = '涨跌幅' if '涨跌幅' in bk_flow.columns else None
+            if col_name:
+                for _, row in bk_flow.iterrows():
+                    sector_map[row['板块']] = float(row[col_name])
+    except:
+        pass
+        
+    # 尝试 2: 同花顺行业 (总是尝试获取，以补充新浪数据的不足)
+    try:
+        bk_ths = ak.stock_board_industry_summary_ths()
+        if bk_ths is not None and not bk_ths.empty:
+             for _, row in bk_ths.iterrows():
+                 # THS usually has '板块' and '涨跌幅'
+                 name = row['板块']
+                 val = float(row['涨跌幅'])
+                 # 如果新浪没覆盖该板块，则添加
+                 if name not in sector_map:
+                     sector_map[name] = val
+    except:
+        pass
+            
+    return sector_map
 
 def fetch_stock_data(symbols: list) -> Dict[str, Any]:
     """
-    获取股票数据 (使用 akshare 库获取数据)
+    获取股票数据 (使用 akshare 库获取数据，切换为 Sina 接口)
+    增加：行业、估值(PE/PB)、基本面(ROE)、同业相对强弱
     
     Args:
         symbols: 股票代码列表 (如 "600519", "000001")
@@ -15,29 +64,84 @@ def fetch_stock_data(symbols: list) -> Dict[str, Any]:
     """
     stock_data = {}
     
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y%m%d")
-    end_date = datetime.datetime.now().strftime("%Y%m%d")
+    # 提前获取行业板块数据，用于后续查找
+    sector_map = fetch_sector_map()
+    
+    now = datetime.datetime.now()
+    # 如果是周末，使用周五的日期
+    if now.weekday() == 5:  # 周六
+        now = now - datetime.timedelta(days=1)
+    elif now.weekday() == 6:  # 周日
+        now = now - datetime.timedelta(days=2)
+
+    start_date = (now - datetime.timedelta(days=365)).strftime("%Y%m%d")
+    end_date = now.strftime("%Y%m%d")
 
     for symbol in symbols:
         try:
-            # 获取历史 K 线数据
-            # akshare 接口: stock_zh_a_hist (日频)
-            # adjust="qfq" 前复权
-            df = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="qfq")
+            # --- 1. 获取历史 K 线数据 (Sina) ---
+            sina_symbol = get_sina_symbol(symbol)
+            df = ak.stock_zh_a_daily(symbol=sina_symbol, start_date=start_date, end_date=end_date)
             
             if df is not None and not df.empty:
-                # 获取股票名称 (尝试获取实时数据以得到名称)
+                # 基础信息变量
                 stock_name = symbol
+                industry = "未知"
+                total_mv = "未知"
+                pe_ttm = "未知"
+                pb = "未知"
+                roe = "未知"
+                relative_strength_msg = "无法计算 (行业数据缺失)"
+                
+                # --- 2. 获取个股基本信息 (行业、市值) ---
                 try:
-                    info = ak.stock_individual_info_em(symbol=symbol)
-                    # info is a DF with columns item, value
-                    name_row = info[info['item'] == "股票名称"]
-                    if not name_row.empty:
-                        stock_name = name_row['value'].values[0]
+                    info_df = ak.stock_individual_info_em(symbol=symbol)
+                    if not info_df.empty:
+                        # item, value
+                        info_dict = dict(zip(info_df['item'], info_df['value']))
+                        stock_name = info_dict.get('股票简称', symbol)
+                        industry = info_dict.get('行业', '未知')
+                        mv = info_dict.get('总市值', 0)
+                        if isinstance(mv, (int, float)) and mv > 0:
+                            total_mv = f"{mv / 100000000:.2f}亿"
                 except:
                     pass
 
-                # 数据处理
+                # --- 3. 获取估值数据 (PE-TTM, PB) ---
+                try:
+                    # 使用百度估值接口 (返回历史序列，取最新)
+                    # 注意：该接口可能稍慢
+                    val_pe = ak.stock_zh_valuation_baidu(symbol=symbol, indicator="市盈率(TTM)")
+                    if not val_pe.empty:
+                        pe_ttm = val_pe.iloc[-1]['value']
+                    
+                    val_pb = ak.stock_zh_valuation_baidu(symbol=symbol, indicator="市净率")
+                    if not val_pb.empty:
+                        pb = val_pb.iloc[-1]['value']
+                except:
+                    pass
+                
+                # --- 4. 获取财务指标 (ROE) ---
+                try:
+                    fin_df = ak.stock_financial_abstract(symbol=symbol)
+                    # 查找 ROE
+                    if not fin_df.empty:
+                        # 尝试找到 "净资产收益率" 相关行
+                        roe_row = fin_df[fin_df['指标'].str.contains('净资产收益率', na=False)]
+                        if not roe_row.empty:
+                            # 取最近一期的数据 (列名通常是日期，且降序排列或第一列之后)
+                            # 列结构: 选项, 指标, date1, date2...
+                            # 假设第3列开始是最近的日期
+                            if len(roe_row.columns) > 2:
+                                # 取第一个日期列的值
+                                val = roe_row.iloc[0, 2]
+                                date_col = roe_row.columns[2]
+                                roe = f"{val}% ({date_col})"
+                except:
+                    pass
+
+                # 数据处理: Sina 返回 columns: date, open, high, low, close, volume...
+                df.rename(columns={'date': '日期', 'close': '收盘', 'volume': '成交量'}, inplace=True)
                 df['收盘'] = pd.to_numeric(df['收盘'])
                 df['成交量'] = pd.to_numeric(df['成交量'])
                 
@@ -47,21 +151,67 @@ def fetch_stock_data(symbols: list) -> Dict[str, Any]:
                 df['MA20'] = df['收盘'].rolling(window=20).mean()
                 df['MA60'] = df['收盘'].rolling(window=60).mean()
                 
-                # 获取最近 5 天的数据
                 hist = df.tail(5)
                 
-                # 构造详细的技术面数据字符串
+                # 关键指标分析
+                latest = df.iloc[-1]
+                prev = df.iloc[-2]
+                change_percent = (latest['收盘'] - prev['收盘']) / prev['收盘'] * 100
+                
+                # --- 5. 计算同业相对强弱 ---
+                matched_sector_name = None
+                matched_sector_change = 0.0
+                
+                # 1. 精确匹配
+                if industry in sector_map:
+                    matched_sector_name = industry
+                    matched_sector_change = sector_map[industry]
+                
+                # 2. 模糊匹配 (如果精确匹配失败)
+                if matched_sector_name is None:
+                    # 尝试去除 "行业" 后缀 (e.g., "酿酒行业" -> "酿酒")
+                    simple_name = industry.replace("行业", "")
+                    if simple_name in sector_map:
+                         matched_sector_name = simple_name
+                         matched_sector_change = sector_map[simple_name]
+                    else:
+                        # 尝试包含匹配
+                        for s_name in sector_map:
+                            # 避免过于宽泛的匹配 (如 "车" 匹配 "汽车")，要求至少2个字且包含
+                            if len(s_name) >= 2 and len(industry) >= 2:
+                                if industry in s_name or s_name in industry:
+                                    matched_sector_name = s_name
+                                    matched_sector_change = sector_map[s_name]
+                                    break
+                
+                if matched_sector_name:
+                    sector_change = matched_sector_change
+                    rel_strength = change_percent - sector_change
+                    status = "强于" if rel_strength > 0 else "弱于"
+                    # 如果匹配的板块名与原名不同，显示在括号里
+                    display_sector = industry
+                    if matched_sector_name != industry:
+                        display_sector = f"{industry}/{matched_sector_name}"
+                        
+                    relative_strength_msg = f"个股 {change_percent:.2f}% vs 行业({matched_sector_name}) {sector_change:.2f}% -> {status}板块 {abs(rel_strength):.2f}%"
+                else:
+                    relative_strength_msg = f"行业({industry}) 数据未找到，无法对比"
+
+                # --- 构造输出 ---
                 data_str = f"股票名称: {stock_name} ({symbol})\n"
+                data_str += f"【基本面概况】\n"
+                data_str += f"- 所属行业: {industry}\n"
+                data_str += f"- 总市值: {total_mv}\n"
+                data_str += f"- 估值水平: PE(TTM)={pe_ttm}, PB={pb}\n"
+                data_str += f"- 财务质量: 最近ROE={roe}\n"
+                data_str += f"- 同业相对强弱: {relative_strength_msg}\n\n"
+                
                 data_str += "【近期行情】 (Date, Open, High, Low, Close, Volume, MA5, MA20):\n"
                 
                 for _, row in hist.iterrows():
                     date_str = row['日期']
                     data_str += f"{date_str}: C={row['收盘']:.2f}, V={row['成交量']}, MA5={row['MA5']:.2f}, MA20={row['MA20']:.2f}\n"
                 
-                # 关键指标分析
-                latest = df.iloc[-1]
-                
-                change_percent = latest['涨跌幅']
                 
                 # 均线位置
                 ma_status = ""
@@ -107,9 +257,9 @@ def fetch_stock_data(symbols: list) -> Dict[str, Any]:
 
 def fetch_market_index_data(indexes: list) -> Dict[str, Any]:
     """
-    获取大盘指数数据
+    获取大盘指数数据 (切换为 Sina 接口)
     """
-    # 映射指数代码到 akshare 格式
+    # 映射指数代码到 Sina 格式
     mapped_indexes = []
     index_map = {} 
     
@@ -124,17 +274,26 @@ def fetch_market_index_data(indexes: list) -> Dict[str, Any]:
         index_map[new_idx] = idx
         
     stock_data = {}
-    start_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y%m%d")
-    end_date = datetime.datetime.now().strftime("%Y%m%d")
     
+    now = datetime.datetime.now()
+    # 如果是周末，使用周五的日期
+    if now.weekday() == 5:  # 周六
+        now = now - datetime.timedelta(days=1)
+    elif now.weekday() == 6:  # 周日
+        now = now - datetime.timedelta(days=2)
+
+    start_date = (now - datetime.timedelta(days=365)).strftime("%Y%m%d")
+    end_date = now.strftime("%Y%m%d")
+    print(f"获取大盘指数数据，时间范围：{start_date} 至 {end_date}")
     for symbol in mapped_indexes:
         original_symbol = index_map.get(symbol, symbol)
         try:
-            # akshare 指数接口: stock_zh_index_daily_em
-            df = ak.stock_zh_index_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)
+            # akshare 指数接口: stock_zh_index_daily (Sina)
+            # symbol like sh000001
+            df = ak.stock_zh_index_daily(symbol=symbol)
             
             if df is not None and not df.empty:
-                # Standardize columns: date, open, close, high, low, volume, amount
+                # Sina index returns: date, open, high, low, close, volume
                 df.rename(columns={'date': '日期', 'close': '收盘', 'volume': '成交量'}, inplace=True)
                 
                 df['收盘'] = pd.to_numeric(df['收盘'])
@@ -164,29 +323,55 @@ def fetch_market_index_data(indexes: list) -> Dict[str, Any]:
 
 def fetch_financial_news() -> str:
     """
-    获取最近的财经新闻 / 行业板块表现
+    获取最近的财经新闻 / 行业板块表现 (切换为 Sina 接口，增加 THS 备选)
     """
     news_str = ""
+    found_data = False
+    
+    # 尝试 1: 新浪行业
     try:
-        # 获取行业板块数据
-        # stock_board_industry_name_em: 东方财富-行业板块-实时
-        bk_flow = ak.stock_board_industry_name_em()
-        
+        bk_flow = ak.stock_sector_spot(indicator="新浪行业")
         if bk_flow is not None and not bk_flow.empty:
-            # 字段: 排名, 板块名称, 最新价, 涨跌幅, 涨跌额, ...
-            top_bk = bk_flow.sort_values(by='涨跌幅', ascending=False).head(5)
-            bottom_bk = bk_flow.sort_values(by='涨跌幅', ascending=True).head(5)
-            
-            news_str += "### 今日行业板块表现 (Top 5)\n"
-            for _, row in top_bk.iterrows():
-                news_str += f"- {row['板块名称']}: {row['涨跌幅']}%\n"
-            
-            news_str += "\n### 今日行业板块表现 (Bottom 5)\n"
-            for _, row in bottom_bk.iterrows():
-                news_str += f"- {row['板块名称']}: {row['涨跌幅']}%\n"
+            col_name = '涨跌幅' if '涨跌幅' in bk_flow.columns else None
+            if col_name:
+                top_bk = bk_flow.sort_values(by=col_name, ascending=False).head(5)
+                bottom_bk = bk_flow.sort_values(by=col_name, ascending=True).head(5)
                 
-    except Exception as e:
-        news_str += f"获取市场概况时出错: {str(e)}"
+                news_str += "### 今日行业板块表现 (Top 5)\n"
+                for _, row in top_bk.iterrows():
+                    val = row[col_name]
+                    news_str += f"- {row['板块']}: {val}%\n"
+                
+                news_str += "\n### 今日行业板块表现 (Bottom 5)\n"
+                for _, row in bottom_bk.iterrows():
+                    val = row[col_name]
+                    news_str += f"- {row['板块']}: {val}%\n"
+                found_data = True
+    except:
+        pass
+        
+    # 尝试 2: 同花顺行业 (如果新浪失败)
+    if not found_data:
+        try:
+            bk_ths = ak.stock_board_industry_summary_ths()
+            if bk_ths is not None and not bk_ths.empty:
+                # THS columns: 序号, 板块, 涨跌幅, ...
+                top_bk = bk_ths.sort_values(by='涨跌幅', ascending=False).head(5)
+                bottom_bk = bk_ths.sort_values(by='涨跌幅', ascending=True).head(5)
+                
+                news_str += "### 今日行业板块表现 (Top 5) [来源:同花顺]\n"
+                for _, row in top_bk.iterrows():
+                    news_str += f"- {row['板块']}: {row['涨跌幅']}%\n"
+                
+                news_str += "\n### 今日行业板块表现 (Bottom 5) [来源:同花顺]\n"
+                for _, row in bottom_bk.iterrows():
+                    news_str += f"- {row['板块']}: {row['涨跌幅']}%\n"
+                found_data = True
+        except Exception as e:
+            news_str += f"获取市场概况备选源出错: {str(e)}"
+
+    if not found_data and not news_str:
+        news_str = "无法获取行业板块数据 (API 连接失败)"
         
     return news_str
 
@@ -196,7 +381,6 @@ if __name__ == "__main__":
     index_data = fetch_market_index_data(indexes)
     for symbol, info in index_data.items():
         print(info)
-        
     print("\n--- 测试个股 ---")
     stock_data = fetch_stock_data(["600519"])
     for symbol, info in stock_data.items():

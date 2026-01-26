@@ -161,8 +161,8 @@ def main():
     args = parser.parse_args()
 
     if args.now:
-        # job()
-        job_gemini()
+        job()
+        # job_gemini()
         return
 
     # 设置定时任务
